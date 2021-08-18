@@ -169,7 +169,7 @@ public class InsertOperation extends AbstractJobOperation {
 			}
 			return jobID;
 		} catch (Exception e) {
-			throw new RuntimeException("Error running SQL job.", e);
+			throw new SqlExecutionException("Error running SQL job.", e);
 		}
 	}
 }
