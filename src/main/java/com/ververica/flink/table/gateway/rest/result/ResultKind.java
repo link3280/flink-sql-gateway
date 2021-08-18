@@ -25,6 +25,9 @@ public enum ResultKind {
 	// for DDL, DCL and statements with a simple "OK"
 	SUCCESS,
 
-	// rows with important content are available (DML, DQL)
-	SUCCESS_WITH_CONTENT
+	// rows with important content are available
+	SUCCESS_WITH_CONTENT,
+
+	// for job operations like DML and DQL, return the job id
+	SUCCESS_WITH_JOB,
 }

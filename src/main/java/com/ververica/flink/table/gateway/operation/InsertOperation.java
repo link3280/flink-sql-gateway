@@ -76,7 +76,7 @@ public class InsertOperation extends AbstractJobOperation {
 		jobId = executeUpdateInternal(context.getExecutionContext());
 		String strJobId = jobId.toString();
 		return ResultSet.builder()
-			.resultKind(ResultKind.SUCCESS_WITH_CONTENT)
+			.resultKind(ResultKind.SUCCESS_WITH_JOB)
 			.columns(ColumnInfo.create(ConstantNames.JOB_ID, new VarCharType(false, strJobId.length())))
 			.data(Row.of(strJobId))
 			.build();

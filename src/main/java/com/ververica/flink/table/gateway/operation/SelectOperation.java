@@ -94,7 +94,7 @@ public class SelectOperation extends AbstractJobOperation {
 		}
 
 		return ResultSet.builder()
-			.resultKind(ResultKind.SUCCESS_WITH_CONTENT)
+			.resultKind(ResultKind.SUCCESS_WITH_JOB)
 			.columns(ColumnInfo.create(ConstantNames.JOB_ID, new VarCharType(false, jobId.toString().length())))
 			.data(Row.of(jobId.toString()))
 			.build();
