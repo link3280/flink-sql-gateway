@@ -39,7 +39,12 @@ import org.apache.flink.client.cli.ProgramOptions;
 import org.apache.flink.client.deployment.ClusterClientFactory;
 import org.apache.flink.client.deployment.ClusterClientServiceLoader;
 import org.apache.flink.client.deployment.ClusterDescriptor;
+import org.apache.flink.client.program.ContextEnvironment;
+import org.apache.flink.client.program.StreamContextEnvironment;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.configuration.DeploymentOptions;
+import org.apache.flink.core.execution.DefaultExecutorServiceLoader;
+import org.apache.flink.core.execution.PipelineExecutorServiceLoader;
 import org.apache.flink.streaming.api.TimeCharacteristic;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.table.api.EnvironmentSettings;
@@ -401,6 +406,7 @@ public class ExecutionContext<ClusterID> {
 		final EnvironmentSettings settings = environment.getExecution().getEnvironmentSettings();
 		// Step 0.0 Initialize the table configuration.
 		final TableConfig config = new TableConfig();
+		config.addConfiguration(flinkConfig);
 		environment.getConfiguration().asMap().forEach((k, v) ->
 			config.getConfiguration().setString(k, v));
 		final boolean noInheritedState = sessionState == null;
@@ -472,19 +478,19 @@ public class ExecutionContext<ClusterID> {
 			ModuleManager moduleManager,
 			FunctionCatalog functionCatalog) {
 		if (environment.getExecution().isStreamingPlanner()) {
-			streamExecEnv = createStreamExecutionEnvironment();
+			streamExecEnv = wrapClassLoader(this::createStreamExecutionEnvironment);
 			execEnv = null;
 
 			final Map<String, String> executorProperties = settings.toExecutorProperties();
 			executor = lookupExecutor(executorProperties, streamExecEnv);
-			tableEnv = createStreamTableEnvironment(
+			tableEnv = wrapClassLoader(() -> createStreamTableEnvironment(
 				streamExecEnv,
 				settings,
 				config,
 				executor,
 				catalogManager,
 				moduleManager,
-				functionCatalog);
+				functionCatalog));
 		} else if (environment.getExecution().isBatchPlanner()) {
 			streamExecEnv = null;
 			execEnv = createExecutionEnvironment();
@@ -570,6 +576,26 @@ public class ExecutionContext<ClusterID> {
 	}
 
 	private StreamExecutionEnvironment createStreamExecutionEnvironment() {
+		if (flinkConfig.get(DeploymentOptions.TARGET) == null) {
+			throw new RuntimeException("No execution.target specified in your configuration file.");
+		}
+
+		PipelineExecutorServiceLoader executorServiceLoader = new DefaultExecutorServiceLoader();
+
+		ContextEnvironment.setAsContext(
+				executorServiceLoader,
+				flinkConfig,
+				classLoader,
+				false,
+				true);
+
+		StreamContextEnvironment.setAsContext(
+				executorServiceLoader,
+				flinkConfig,
+				classLoader,
+				false,
+				true);
+
 		final StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
 		env.setRestartStrategy(environment.getExecution().getRestartStrategy());
 		env.setParallelism(environment.getExecution().getParallelism());

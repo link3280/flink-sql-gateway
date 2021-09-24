@@ -27,6 +27,7 @@ import com.ververica.flink.table.gateway.rest.session.SessionID;
 import org.apache.flink.client.cli.DefaultCLI;
 import org.apache.flink.client.deployment.DefaultClusterClientServiceLoader;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.configuration.DeploymentOptions;
 
 import org.junit.Before;
 
@@ -51,10 +52,13 @@ public class OperationTestBase {
 	}
 
 	protected DefaultContext getDefaultContext() {
+		Configuration configuration = new Configuration();
+		configuration.set(DeploymentOptions.TARGET, "local");
+		configuration.set(DeploymentOptions.ATTACHED, true);
 		return new DefaultContext(
 			new Environment(),
 			Collections.emptyList(),
-			new Configuration(),
+			configuration,
 			new DefaultCLI(),
 			new DefaultClusterClientServiceLoader());
 	}

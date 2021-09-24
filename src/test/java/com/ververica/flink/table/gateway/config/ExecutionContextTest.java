@@ -28,6 +28,7 @@ import org.apache.flink.api.common.restartstrategy.RestartStrategies;
 import org.apache.flink.client.cli.DefaultCLI;
 import org.apache.flink.client.deployment.DefaultClusterClientServiceLoader;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.configuration.DeploymentOptions;
 import org.apache.flink.runtime.execution.librarycache.FlinkUserCodeClassLoaders;
 import org.apache.flink.table.api.TableEnvironment;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
@@ -269,6 +270,7 @@ public class ExecutionContextTest {
 		env.getCatalogs().clear();
 		env.getCatalogs().put("test", CatalogEntry.create(catalogProps));
 		Configuration flinkConfig = new Configuration();
+		flinkConfig.set(DeploymentOptions.TARGET, "local");
 		ExecutionContext.builder(env,
 			new Environment(),
 			Collections.emptyList(),
@@ -285,6 +287,7 @@ public class ExecutionContextTest {
 			file,
 			replaceVars);
 		final Configuration flinkConfig = new Configuration();
+		flinkConfig.set(DeploymentOptions.TARGET, "local");
 		return (ExecutionContext<T>) ExecutionContext.builder(
 			env,
 			new Environment(),

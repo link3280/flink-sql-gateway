@@ -21,7 +21,6 @@ package com.ververica.flink.table.gateway.operation;
 import com.ververica.flink.table.gateway.context.ExecutionContext;
 import com.ververica.flink.table.gateway.context.SessionContext;
 import com.ververica.flink.table.gateway.deployment.ClusterDescriptorAdapterFactory;
-import com.ververica.flink.table.gateway.deployment.ProgramDeployer;
 import com.ververica.flink.table.gateway.rest.result.ColumnInfo;
 import com.ververica.flink.table.gateway.rest.result.ConstantNames;
 import com.ververica.flink.table.gateway.rest.result.ResultKind;
@@ -36,15 +35,17 @@ import com.ververica.flink.table.gateway.utils.SqlExecutionException;
 import com.ververica.flink.table.gateway.utils.SqlGatewayException;
 
 import org.apache.flink.api.common.JobID;
-import org.apache.flink.api.dag.Pipeline;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.configuration.Configuration;
-import org.apache.flink.configuration.DeploymentOptions;
+import org.apache.flink.configuration.PipelineOptions;
 import org.apache.flink.core.execution.JobClient;
+import org.apache.flink.table.api.SqlParserException;
 import org.apache.flink.table.api.Table;
 import org.apache.flink.table.api.TableColumn;
 import org.apache.flink.table.api.TableEnvironment;
+import org.apache.flink.table.api.TableResult;
 import org.apache.flink.table.api.TableSchema;
+import org.apache.flink.table.api.internal.TableEnvironmentInternal;
 import org.apache.flink.table.types.DataType;
 import org.apache.flink.table.types.logical.VarCharType;
 import org.apache.flink.table.types.logical.utils.LogicalTypeUtils;
@@ -185,6 +186,8 @@ public class SelectOperation extends AbstractJobOperation {
 	}
 
 	private <C> ResultDescriptor executeQueryInternal(ExecutionContext<C> executionContext, String query) {
+		final TableEnvironmentInternal tableEnv = executionContext.getTableEnvironment();
+
 		// create table
 		final Table table = createTable(executionContext, executionContext.getTableEnvironment(), query);
 
@@ -204,59 +207,46 @@ public class SelectOperation extends AbstractJobOperation {
 		}
 
 		String jobName = getJobName(query);
+
+		Configuration tableEnvConfig = tableEnv.getConfig().getConfiguration();
+		// set job name
+		tableEnvConfig.set(PipelineOptions.NAME, jobName);
+
 		final String tableName = String.format("_tmp_table_%s", UUID.randomUUID().toString().replace("-", ""));
-		final Pipeline pipeline;
+		TableResult tableResult;
+		JobClient jobClient;
 		try {
 			// writing to a sink requires an optimization step that might reference UDFs during code compilation
-			executionContext.wrapClassLoader(() -> {
-				executionContext.getTableEnvironment().registerTableSinkInternal(tableName, result.getTableSink());
-				table.insertInto(tableName);
-				return null;
+			tableResult = executionContext.wrapClassLoader(() -> {
+				tableEnv.registerTableSinkInternal(tableName, result.getTableSink());
+				return table.executeInsert(tableName);
 			});
-			pipeline = executionContext.createPipeline(jobName);
+			jobClient = tableResult.getJobClient().get();
+		} catch (SqlParserException e) {
+			LOG.error(String.format("Session: %s. Invalid SQL query.", sessionId), e);
+			throw new SqlExecutionException("Invalid SQL query.", e);
 		} catch (Throwable t) {
+			LOG.error(String.format("Session: %s. Error running SQL job.", sessionId), t);
+			// catch everything such that the query does not crash the executor
+			throw new SqlExecutionException("Error running SQL job.", t);
+		} finally {
 			// the result needs to be closed as long as
 			// it not stored in the result store
 			result.close();
-			LOG.error(String.format("Session: %s. Invalid SQL query.", sessionId), t);
-			// catch everything such that the query does not crash the executor
-			throw new SqlExecutionException("Invalid SQL query.", t);
-		} finally {
-			// Remove the temporal table object.
-			executionContext.wrapClassLoader(() -> {
-				executionContext.getTableEnvironment().dropTemporaryTable(tableName);
-				return null;
-			});
-		}
-
-		// create a copy so that we can change settings without affecting the original config
-		Configuration configuration = new Configuration(executionContext.getFlinkConfig());
-		// for queries we wait for the job result, so run in attached mode
-		configuration.set(DeploymentOptions.ATTACHED, true);
-		// shut down the cluster if the shell is closed
-		configuration.set(DeploymentOptions.SHUTDOWN_IF_ATTACHED, true);
-
-		// create execution
-		final ProgramDeployer deployer = new ProgramDeployer(
-				configuration, jobName, pipeline, context.getExecutionContext().getClassLoader());
-
-		JobClient jobClient;
-		// blocking deployment
-		try {
-			jobClient = deployer.deploy().get();
-		} catch (Exception e) {
-			LOG.error(String.format("Session: %s. Error running SQL job.", sessionId), e);
-			throw new RuntimeException("Error running SQL job.", e);
+			// remove the temporal table object.
+			executionContext.wrapClassLoader(() -> executionContext.getTableEnvironment().dropTemporaryTable(tableName));
+			// restore configurations
+			tableEnvConfig.removeConfig(PipelineOptions.NAME);
 		}
 
 		JobID jobID = jobClient.getJobID();
 		this.clusterDescriptorAdapter =
-				ClusterDescriptorAdapterFactory.create(context.getExecutionContext(), configuration, sessionId, jobID);
+				ClusterDescriptorAdapterFactory.create(context.getExecutionContext(), tableEnvConfig, sessionId, jobID);
 		if (LOG.isDebugEnabled()) {
 			LOG.debug("Cluster Descriptor Adapter: {}", clusterDescriptorAdapter);
 		}
 
-		LOG.info("Session: {}. Submit flink job: {} successfully, query: ", sessionId, jobID.toString(), query);
+		LOG.info("Session: {}. Submit flink job {} successfully, queryL {}", sessionId, jobID.toString(), query);
 
 		// start result retrieval
 		result.startRetrieval(jobClient);

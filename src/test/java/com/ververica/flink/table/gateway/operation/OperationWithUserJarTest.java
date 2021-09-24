@@ -30,6 +30,7 @@ import com.ververica.flink.table.gateway.utils.ResourceFileUtils;
 import org.apache.flink.client.cli.DefaultCLI;
 import org.apache.flink.client.deployment.DefaultClusterClientServiceLoader;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.configuration.DeploymentOptions;
 import org.apache.flink.table.api.DataTypes;
 import org.apache.flink.table.types.logical.BooleanType;
 import org.apache.flink.types.Row;
@@ -58,10 +59,12 @@ public class OperationWithUserJarTest extends OperationTestBase {
 	@Override
 	protected DefaultContext getDefaultContext() {
 		URL jarUrl = compileUserDefinedSource();
+		final Configuration flinkConfig = new Configuration();
+		flinkConfig.set(DeploymentOptions.TARGET, "local");
 		return new DefaultContext(
 			new Environment(),
 			Collections.singletonList(jarUrl),
-			new Configuration(),
+			flinkConfig,
 			new DefaultCLI(),
 			new DefaultClusterClientServiceLoader());
 	}

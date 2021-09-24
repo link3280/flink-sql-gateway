@@ -21,7 +21,6 @@ package com.ververica.flink.table.gateway.operation;
 import com.ververica.flink.table.gateway.context.ExecutionContext;
 import com.ververica.flink.table.gateway.context.SessionContext;
 import com.ververica.flink.table.gateway.deployment.ClusterDescriptorAdapterFactory;
-import com.ververica.flink.table.gateway.deployment.ProgramDeployer;
 import com.ververica.flink.table.gateway.rest.result.ColumnInfo;
 import com.ververica.flink.table.gateway.rest.result.ConstantNames;
 import com.ververica.flink.table.gateway.rest.result.ResultKind;
@@ -29,12 +28,14 @@ import com.ververica.flink.table.gateway.rest.result.ResultSet;
 import com.ververica.flink.table.gateway.utils.SqlExecutionException;
 
 import org.apache.flink.api.common.JobID;
-import org.apache.flink.api.dag.Pipeline;
 import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.configuration.Configuration;
-import org.apache.flink.configuration.DeploymentOptions;
+import org.apache.flink.configuration.PipelineOptions;
 import org.apache.flink.core.execution.JobClient;
+import org.apache.flink.table.api.SqlParserException;
+import org.apache.flink.table.api.TableConfig;
 import org.apache.flink.table.api.TableEnvironment;
+import org.apache.flink.table.api.TableResult;
 import org.apache.flink.table.types.logical.BigIntType;
 import org.apache.flink.table.types.logical.VarCharType;
 import org.apache.flink.types.Row;
@@ -73,7 +74,7 @@ public class InsertOperation extends AbstractJobOperation {
 
 	@Override
 	public ResultSet execute() {
-		jobId = executeUpdateInternal(context.getExecutionContext());
+		jobId = context.getExecutionContext().wrapClassLoader(() -> executeUpdateInternal(context.getExecutionContext()));
 		String strJobId = jobId.toString();
 		return ResultSet.builder()
 			.resultKind(ResultKind.SUCCESS_WITH_JOB)
@@ -120,56 +121,42 @@ public class InsertOperation extends AbstractJobOperation {
 
 	private <C> JobID executeUpdateInternal(ExecutionContext<C> executionContext) {
 		TableEnvironment tableEnv = executionContext.getTableEnvironment();
-		// parse and validate statement
-		try {
-			executionContext.wrapClassLoader(() -> {
-				tableEnv.sqlUpdate(statement);
-				return null;
-			});
-		} catch (Throwable t) {
-			LOG.error(String.format("Session: %s. Invalid SQL query.", sessionId), t);
-			// catch everything such that the statement does not crash the executor
-			throw new SqlExecutionException("Invalid SQL update statement.", t);
-		}
 
-		//Todo: we should refactor following condition after TableEnvironment has support submit job directly.
 		if (!INSERT_SQL_PATTERN.matcher(statement.trim()).matches()) {
 			LOG.error("Session: {}. Only insert is supported now.", sessionId);
 			throw new SqlExecutionException("Only insert is supported now");
 		}
 
 		String jobName = getJobName(statement);
-		// create job graph with dependencies
-		final Pipeline pipeline;
-		try {
-			pipeline = executionContext.wrapClassLoader(() -> executionContext.createPipeline(jobName));
-		} catch (Throwable t) {
-			LOG.error(String.format("Session: %s. Invalid SQL query.", sessionId), t);
-			// catch everything such that the statement does not crash the executor
-			throw new SqlExecutionException("Invalid SQL statement.", t);
-		}
 
-		// create a copy so that we can change settings without affecting the original config
-		Configuration configuration = new Configuration(executionContext.getFlinkConfig());
-		// for update queries we don't wait for the job result, so run in detached mode
-		configuration.set(DeploymentOptions.ATTACHED, false);
-
-		// create execution
-		final ProgramDeployer deployer = new ProgramDeployer(
-				configuration, jobName, pipeline, context.getExecutionContext().getClassLoader());
+		TableConfig tableConfig = tableEnv.getConfig();
+		Configuration tblEnvConfig = tableConfig.getConfiguration();
+		tblEnvConfig.set(PipelineOptions.NAME, jobName);
 
 		// blocking deployment
 		try {
-			JobClient jobClient = deployer.deploy().get();
+			TableResult result;
+			result = executionContext.wrapClassLoader(() -> tableEnv.executeSql(statement));
+			JobClient jobClient = result.getJobClient().get();
 			JobID jobID = jobClient.getJobID();
 			this.clusterDescriptorAdapter =
-					ClusterDescriptorAdapterFactory.create(context.getExecutionContext(), configuration, sessionId, jobID);
+					ClusterDescriptorAdapterFactory.create(context.getExecutionContext(), tblEnvConfig, sessionId, jobID);
 			if (LOG.isDebugEnabled()) {
 				LOG.debug("Cluster Descriptor Adapter: {}", clusterDescriptorAdapter);
 			}
+
+			LOG.info("Session: {}. Submit flink job {} successfully, query: {}", sessionId, jobID.toString(), statement);
+
 			return jobID;
-		} catch (Exception e) {
+		} catch (SqlParserException e) {
+			LOG.error(String.format("Session: %s. Invalid SQL query.", sessionId), e);
+			throw new SqlExecutionException("Invalid SQL statement.", e);
+		} catch (Throwable e) {
+			// catch everything such that the statement does not crash the executor
 			throw new SqlExecutionException("Error running SQL job.", e);
+		} finally {
+			// restore to the origin configuration
+			tblEnvConfig.removeConfig(PipelineOptions.NAME);
 		}
 	}
 }

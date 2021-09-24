@@ -34,6 +34,7 @@ import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.client.cli.DefaultCLI;
 import org.apache.flink.client.deployment.DefaultClusterClientServiceLoader;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.configuration.DeploymentOptions;
 import org.apache.flink.table.api.DataTypes;
 import org.apache.flink.table.api.TableSchema;
 import org.apache.flink.table.catalog.Catalog;
@@ -106,10 +107,12 @@ public class DependencyTest {
 
 		// create executor with dependencies
 		final URL dependency = Paths.get("target", TABLE_FACTORY_JAR_FILE).toUri().toURL();
+		final Configuration flinkConfig = new Configuration();
+		flinkConfig.set(DeploymentOptions.TARGET, "local");
 		DefaultContext defaultContext = new DefaultContext(
 			env,
 			Collections.singletonList(dependency),
-			new Configuration(),
+			flinkConfig,
 			new DefaultCLI(),
 			new DefaultClusterClientServiceLoader());
 		SessionManager sessionManager = new SessionManager(defaultContext);
